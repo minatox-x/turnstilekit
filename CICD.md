@@ -1,159 +1,75 @@
-# TurnstileKit — GitHub Actions CI/CD Guide
+# TurnstileKit — CI/CD Guide
 
-This guide explains the three workflow files and the exact steps to go from
-source code to a downloadable SDK.
-
----
-
-## Overview
-
-```
-Every push / PR  ──►  build.yml            builds AAR, uploads as artifact
-Tag  v1.0.0      ──►  release.yml          builds AAR, creates GitHub Release
-Tag  v1.0.0      ──►  publish-packages.yml publishes to GitHub Packages (optional)
-```
+Everything builds entirely in GitHub Actions.  
+**No local Gradle installation, no `gradlew` generation, nothing to set up locally.**
 
 ---
 
-## Step 0 — One-time local setup
+## How the two workflows fit together
 
-The workflows rely on the `gradlew` wrapper script. Generate it once and
-commit it:
-
-```bash
-# Inside the TurnstileKit root
-gradle wrapper --gradle-version 8.4
-git add gradlew gradlew.bat gradle/wrapper/
-git commit -m "chore: add Gradle wrapper"
+```
+Every push / PR  ──►  build.yml     builds AAR → uploads as artifact
+Tag  v1.0.0      ──►  release.yml   builds AAR → GitHub Release + GitHub Packages
 ```
 
-> If you do not have Gradle installed locally, download it from
-> https://gradle.org/releases/ or use `sdk install gradle 8.4` (via SDKMAN).
+---
 
-Then push to GitHub:
+## Step 1 — Two things to replace in `turnstile-sdk/build.gradle.kts`
+
+Open the file and find the Maven block at the bottom. Replace the two placeholders:
+
+```kotlin
+groupId = "com.github.YOUR_GITHUB_USERNAME"     // ← your GitHub username
+url     = uri("https://maven.pkg.github.com/YOUR_GITHUB_USERNAME/YOUR_REPO_NAME")  // ← same + repo name
+```
+
+Commit and push to `main`.
+
+---
+
+## Step 2 — Push to GitHub
 
 ```bash
 git remote add origin https://github.com/YOUR_USERNAME/YOUR_REPO.git
 git push -u origin main
 ```
 
-The `build.yml` workflow fires immediately on the first push.
+The `build.yml` workflow fires automatically.  
+After ~2 minutes go to **Actions → Build SDK → Artifacts → turnstile-sdk-aar** to download the AAR.
 
 ---
 
-## Workflow 1 — `build.yml` (CI, runs on every push)
-
-**Trigger:** any push to `main` or `develop`, or a pull request targeting `main`.
-
-**What it does:**
-1. Checks out the code
-2. Installs JDK 17
-3. Restores the Gradle cache (cuts ~2 min off subsequent runs)
-4. Runs `./gradlew :turnstile-sdk:assembleRelease`
-5. Uploads `turnstile-sdk-release.aar` as a workflow artifact
-
-**Where to find the AAR:**
-Go to **Actions → Build SDK → (click the run) → Artifacts → turnstile-sdk-aar**
-and click to download. The file is kept for 30 days.
-
----
-
-## Workflow 2 — `release.yml` (Release, runs on version tags)
-
-**Trigger:** a Git tag matching `v1.2.3`.
-
-**What it does:**
-1–5. Same as `build.yml`
-6. Renames the AAR to `turnstile-sdk-1.2.3.aar`
-7. Creates a GitHub Release at that tag with auto-generated release notes
-8. Attaches the versioned AAR to the release
-
-### How to cut a release
+## Step 3 — Cut a release
 
 ```bash
-# Tag the commit you want to release
 git tag v1.0.0
 git push origin v1.0.0
 ```
 
-The workflow starts automatically. After ~2 minutes you will see:
+That is the only command you run. The `release.yml` workflow will:
 
-```
-Releases
-  TurnstileKit v1.0.0
-    📦  turnstile-sdk-1.0.0.aar   (download)
-```
-
-Anyone can download the AAR directly from the Releases page without needing
-access to Actions.
+1. Install Gradle 8.4 on the runner (no local setup needed)
+2. Build `turnstile-sdk-release.aar`
+3. Rename it to `turnstile-sdk-1.0.0.aar`
+4. Create a **GitHub Release** at that tag with auto-generated notes and the AAR attached
+5. Publish the AAR to **GitHub Packages** (Maven) so it can be used as a Gradle dependency
 
 ---
 
-## Workflow 3 — `publish-packages.yml` (optional, GitHub Packages Maven)
+## Using the published SDK in another project
 
-This publishes the SDK to GitHub's Maven registry so other projects can pull
-it with a regular Gradle dependency instead of downloading the AAR manually.
-
-### Extra setup required
-
-**1. Add `maven-publish` to `turnstile-sdk/build.gradle.kts`:**
-
-```kotlin
-plugins {
-    id("com.android.library")
-    id("org.jetbrains.kotlin.android")
-    `maven-publish`                        // ← add this line
-}
-
-// ... your existing android { } block ...
-
-afterEvaluate {
-    publishing {
-        publications {
-            create<MavenPublication>("release") {
-                from(components["release"])
-                groupId    = "com.github.YOUR_GITHUB_USERNAME"
-                artifactId = "turnstile-sdk"
-                version    = System.getenv("SDK_VERSION") ?: "1.0.0"
-            }
-        }
-        repositories {
-            maven {
-                name = "GitHubPackages"
-                url  = uri("https://maven.pkg.github.com/YOUR_GITHUB_USERNAME/YOUR_REPO_NAME")
-                credentials {
-                    username = System.getenv("GITHUB_ACTOR")
-                    password = System.getenv("GITHUB_TOKEN")
-                }
-            }
-        }
-    }
-}
-```
-
-**2. Replace the placeholders** (`YOUR_GITHUB_USERNAME`, `YOUR_REPO_NAME`) in
-both `publish-packages.yml` and `build.gradle.kts`.
-
-**3. Push a version tag** — the publish job runs automatically alongside
-`release.yml`.
-
-### Consuming the published SDK
-
-In any other Android project:
+Once published via GitHub Packages, any Android project can depend on it:
 
 ```kotlin
 // settings.gradle.kts
 dependencyResolutionManagement {
     repositories {
-        google()
-        mavenCentral()
+        google(); mavenCentral()
         maven {
             url = uri("https://maven.pkg.github.com/YOUR_USERNAME/YOUR_REPO")
             credentials {
-                username = providers.gradleProperty("gpr.user").orNull
-                             ?: System.getenv("GITHUB_ACTOR")
-                password = providers.gradleProperty("gpr.key").orNull
-                             ?: System.getenv("GITHUB_TOKEN")
+                username = providers.gradleProperty("gpr.user").orNull ?: System.getenv("GITHUB_ACTOR")
+                password = providers.gradleProperty("gpr.key").orNull  ?: System.getenv("GITHUB_TOKEN")
             }
         }
     }
@@ -167,36 +83,25 @@ dependencies {
 }
 ```
 
-> GitHub Packages requires authentication even for public packages. Each
-> consumer must supply a GitHub Personal Access Token with `read:packages`
-> scope (store it in `~/.gradle/gradle.properties` as `gpr.key=ghp_xxx`).
+Store a GitHub Personal Access Token (`read:packages` scope) in
+`~/.gradle/gradle.properties`:
+```properties
+gpr.user=YOUR_GITHUB_USERNAME
+gpr.key=ghp_xxxxxxxxxxxx
+```
 
 ---
 
-## Typical release checklist
+## Release checklist
 
 ```
-[ ] Bump versionName in turnstile-sdk/build.gradle.kts
+[ ] Replace the two YOUR_* placeholders in turnstile-sdk/build.gradle.kts
 [ ] git add . && git commit -m "chore: release v1.0.0"
 [ ] git tag v1.0.0
 [ ] git push origin main --tags
-[ ] Watch Actions → all jobs green
-[ ] Open Releases → verify AAR is attached
-[ ] (optional) Share the release URL with consumers
+[ ] Actions → Release SDK → all steps green (~2 min)
+[ ] Releases page → TurnstileKit v1.0.0 → AAR is attached ✓
 ```
-
----
-
-## Workflow run time (approximate)
-
-| Step | Cold (no cache) | Warm (with cache) |
-|---|---|---|
-| Checkout | 5 s | 5 s |
-| Setup JDK | 20 s | 5 s |
-| Gradle cache restore | — | 30 s |
-| `assembleRelease` | 3–5 min | 45–90 s |
-| Upload artifact | 5 s | 5 s |
-| **Total** | **~5 min** | **~2 min** |
 
 ---
 
@@ -204,8 +109,8 @@ dependencies {
 
 | Problem | Fix |
 |---|---|
-| `gradlew: Permission denied` | The `chmod +x gradlew` step is in the workflow; if it still fails, commit `gradlew` with execute bit: `git update-index --chmod=+x gradlew` |
-| `SDK location not found` | The Android SDK is pre-installed on `ubuntu-latest`; do not commit a `local.properties` file (add it to `.gitignore`) |
-| Release not created | Check the job has `permissions: contents: write` |
-| Publish fails with 401 | Ensure `packages: write` is in the job's `permissions` block |
-| Cache miss every run | Make sure `**/*.gradle.kts` glob matches your file locations |
+| `release.yml` fails at "Publish" with 401 | Make sure the job has `permissions: packages: write` (already set) |
+| `release.yml` fails at "Create GitHub Release" with 403 | Make sure the job has `permissions: contents: write` (already set) |
+| Build fails with "SDK location not found" | Do **not** commit `local.properties` — add it to `.gitignore` |
+| Gradle cache miss on every run | `gradle/actions/setup-gradle@v3` handles caching automatically; no extra config needed |
+| Tag pushed but workflow didn't trigger | Confirm the tag matches `v[0-9]+.[0-9]+.[0-9]+` (e.g. `v1.0.0`, not `1.0.0`) |
