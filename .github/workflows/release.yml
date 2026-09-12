@@ -1,7 +1,15 @@
 name: Release SDK
 
-# Push a tag like  git tag v1.0.0 && git push origin v1.0.0
-# to trigger this workflow.
+# Push a version tag to trigger this workflow:
+#   git tag v1.0.0
+#   git push origin v1.0.0
+#
+# The workflow will:
+#   1. Build the AAR
+#   2. Create a GitHub Release with the AAR attached
+#   3. Publish the AAR to GitHub Packages (Maven)
+#
+# No local Gradle or gradlew required — everything runs in CI.
 on:
   push:
     tags:
@@ -9,59 +17,54 @@ on:
 
 jobs:
   release:
-    name: Build & Publish Release
+    name: Build, Release & Publish
     runs-on: ubuntu-latest
 
-    # `contents: write` lets the job create GitHub Releases and upload assets.
     permissions:
-      contents: write
+      contents: write    # create GitHub Releases and upload assets
+      packages: write    # publish to GitHub Packages (Maven)
 
     steps:
-      # ── 1. Source ─────────────────────────────────────────────────────────────
+      # ── 1. Source ─────────────────────────────────────────────────────────
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ── 2. Java ──────────────────────────────────────────────────────────────
+      # ── 2. Java ───────────────────────────────────────────────────────────
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
 
-      # ── 3. Gradle cache ───────────────────────────────────────────────────────
-      - name: Cache Gradle packages
-        uses: actions/cache@v4
+      # ── 3. Gradle ─────────────────────────────────────────────────────────
+      #    Installs Gradle 8.4 on the runner with automatic caching.
+      #    No gradlew or local Gradle installation needed.
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v3
         with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle.kts', '**/gradle-wrapper.properties') }}
-          restore-keys: |
-            ${{ runner.os }}-gradle-
+          gradle-version: '8.4'
 
-      # ── 4. Parse version from the Git tag ─────────────────────────────────────
+      # ── 4. Parse version from the Git tag ─────────────────────────────────
       #    GITHUB_REF_NAME = "v1.2.3"  →  VERSION = "1.2.3"
       - name: Extract version
         id: ver
         run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
-      # ── 5. Build ──────────────────────────────────────────────────────────────
-      - name: Make gradlew executable
-        run: chmod +x gradlew
-
+      # ── 5. Build ──────────────────────────────────────────────────────────
       - name: Build release AAR
-        run: ./gradlew :turnstile-sdk:assembleRelease --no-daemon
+        run: gradle :turnstile-sdk:assembleRelease --no-daemon
 
-      # ── 6. Rename the AAR to include the version number ───────────────────────
+      # ── 6. Rename AAR to include the version ──────────────────────────────
       #    turnstile-sdk-release.aar  →  turnstile-sdk-1.2.3.aar
       - name: Rename AAR
         run: |
           mv turnstile-sdk/build/outputs/aar/turnstile-sdk-release.aar \
              turnstile-sdk/build/outputs/aar/turnstile-sdk-${{ steps.ver.outputs.VERSION }}.aar
 
-      # ── 7. Create GitHub Release and attach the AAR ───────────────────────────
-      #    Uses the built-in `gh` CLI — no third-party action needed.
-      #    --generate-notes auto-fills the release body from merged PRs / commits.
+      # ── 7. GitHub Release ─────────────────────────────────────────────────
+      #    Creates the Release on the repo's Releases page and attaches the
+      #    AAR so anyone can download it without a GitHub account.
+      #    --generate-notes fills the description from merged PRs/commits.
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -69,9 +72,20 @@ jobs:
           gh release create "$GITHUB_REF_NAME" \
             --title "TurnstileKit $GITHUB_REF_NAME" \
             --generate-notes \
-            turnstile-sdk/build/outputs/aar/turnstile-sdk-${{ steps.ver.outputs.VERSION }}.aar
+            "turnstile-sdk/build/outputs/aar/turnstile-sdk-${{ steps.ver.outputs.VERSION }}.aar"
 
-      # ── 8. Also upload as a workflow artifact (handy for quick inspection) ────
+      # ── 8. Publish to GitHub Packages (Maven) ─────────────────────────────
+      #    After this step consumers can pull the SDK as a Gradle dependency
+      #    instead of downloading the AAR manually.
+      #    Requires the maven-publish block in turnstile-sdk/build.gradle.kts
+      #    (already present — just replace the two placeholder values).
+      - name: Publish to GitHub Packages
+        run: gradle :turnstile-sdk:publish --no-daemon
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SDK_VERSION:  ${{ steps.ver.outputs.VERSION }}
+
+      # ── 9. Also save as a workflow artifact ───────────────────────────────
       - name: Upload AAR artifact
         uses: actions/upload-artifact@v4
         with:
