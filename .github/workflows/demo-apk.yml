@@ -1,7 +1,7 @@
 name: Build Demo APK
 
 # Runs ONLY when triggered manually from the GitHub Actions tab.
-# Go to: Actions → Build Demo APK → Run workflow → Run workflow
+# Go to: Actions → Build Demo APK → Run workflow
 on:
   workflow_dispatch:
     inputs:
@@ -13,10 +13,22 @@ on:
         options:
           - debug
           - release
+      version_name:
+        description: 'Version name shown inside the APK (e.g. 1.0.0)'
+        required: true
+        default: '1.0.0'
+      default_url:
+        description: 'Pre-filled Site URL in the demo app'
+        required: false
+        default: 'https://www.cloudflare.com'
+      default_sitekey:
+        description: 'Pre-filled Sitekey in the demo app'
+        required: false
+        default: '1x00000000000000000000AA'
 
 jobs:
   build-apk:
-    name: Build ${{ github.event.inputs.build_type }} APK
+    name: Build ${{ github.event.inputs.build_type }} APK v${{ github.event.inputs.version_name }}
     runs-on: ubuntu-latest
 
     steps:
@@ -35,7 +47,62 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v3
 
-      # ── 4. Build APK ─────────────────────────────────────────────────────────
+      # ── 4. Inject demo values into the layout XML ─────────────────────────────
+      #    Replaces the default URL and sitekey pre-filled in the demo app's
+      #    two TextInputEditText fields (activity_main.xml) at build time.
+      #    You can also change these permanently in:
+      #      app/src/main/res/layout/activity_main.xml
+      #        android:text="..."  inside <TextInputEditText android:id="@+id/etUrl">
+      #        android:text="..."  inside <TextInputEditText android:id="@+id/etSitekey">
+      - name: Inject demo URL and sitekey
+        run: |
+          URL="${{ github.event.inputs.default_url }}"
+          SITEKEY="${{ github.event.inputs.default_sitekey }}"
+          FILE="app/src/main/res/layout/activity_main.xml"
+
+          # Replace the etUrl default text value
+          sed -i "s|android:id=\"@+id/etUrl\".*|android:id=\"@+id/etUrl\"|" "$FILE"
+          # Use python for safe multi-line XML substitution
+          python3 - "$FILE" "$URL" "$SITEKEY" << 'PYEOF'
+          import sys, re
+
+          path, url, sitekey = sys.argv[1], sys.argv[2], sys.argv[3]
+          content = open(path).read()
+
+          # Replace etUrl default text
+          content = re.sub(
+              r'(android:id="@\+id/etUrl"[^>]*?\n\s*android:text=")[^"]*(")',
+              rf'\g<1>{url}\2',
+              content,
+              flags=re.DOTALL
+          )
+
+          # Replace etSitekey default text
+          content = re.sub(
+              r'(android:id="@\+id/etSitekey"[^>]*?\n\s*android:text=")[^"]*(")',
+              rf'\g<1>{sitekey}\2',
+              content,
+              flags=re.DOTALL
+          )
+
+          open(path, 'w').write(content)
+          print("Injected URL:", url)
+          print("Injected sitekey:", sitekey)
+          PYEOF
+
+      # ── 5. Inject version name into app/build.gradle.kts ─────────────────────
+      #    Sets versionName to the value typed in the workflow input.
+      #    You can also change this permanently in:
+      #      app/build.gradle.kts  →  versionName = "x.y.z"
+      - name: Inject version name
+        run: |
+          VERSION="${{ github.event.inputs.version_name }}"
+          sed -i "s/versionName\s*=\s*\"[^\"]*\"/versionName   = \"${VERSION}\"/" \
+            app/build.gradle.kts
+          echo "Set versionName to: $VERSION"
+          grep "versionName" app/build.gradle.kts
+
+      # ── 6. Build APK ─────────────────────────────────────────────────────────
       - name: Build debug APK
         if: github.event.inputs.build_type == 'debug'
         run: |
@@ -48,19 +115,19 @@ jobs:
           chmod +x gradlew
           ./gradlew :app:assembleRelease --no-daemon
 
-      # ── 5. Rename APK to include build type and short SHA ────────────────────
+      # ── 7. Rename APK ────────────────────────────────────────────────────────
       - name: Rename APK
         run: |
-          TYPE=${{ github.event.inputs.build_type }}
-          SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          TYPE="${{ github.event.inputs.build_type }}"
+          VERSION="${{ github.event.inputs.version_name }}"
           SRC="app/build/outputs/apk/${TYPE}/app-${TYPE}.apk"
-          DST="app/build/outputs/apk/${TYPE}/TurnstileKit-demo-${TYPE}-${SHA}.apk"
+          DST="app/build/outputs/apk/${TYPE}/TurnstileKit-demo-${VERSION}-${TYPE}.apk"
           mv "$SRC" "$DST"
-          echo "APK_PATH=$DST" >> $GITHUB_ENV
-          echo "APK_NAME=TurnstileKit-demo-${TYPE}-${SHA}.apk" >> $GITHUB_ENV
+          echo "APK_PATH=$DST"   >> $GITHUB_ENV
+          echo "APK_NAME=TurnstileKit-demo-${VERSION}-${TYPE}.apk" >> $GITHUB_ENV
 
-      # ── 6. Upload APK as artifact ────────────────────────────────────────────
-      #    Download it from: Actions → this run → Artifacts section at the bottom
+      # ── 8. Upload APK artifact ───────────────────────────────────────────────
+      #    Download from: Actions → this run → Artifacts section at the bottom
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
