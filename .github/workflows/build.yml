@@ -21,20 +21,8 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      # Install Gradle 8.4 on the runner so we can call `gradle wrapper`.
-      # The wrapper it generates is then used for the actual build — this
-      # ensures settings.gradle.kts (and its plugin repositories) are fully
-      # honoured, which plain `gradle` does not reliably do for Android projects.
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v3
-        with:
-          gradle-version: '8.4'
-
-      # Generate gradlew in CI — no local Gradle installation needed.
-      # setup-gradle already cached the 8.4 distribution above, so ./gradlew
-      # picks it up from ~/.gradle/wrapper/dists without re-downloading.
-      - name: Generate Gradle wrapper
-        run: gradle wrapper --gradle-version 8.4 --distribution-type bin
 
       - name: Build release AAR
         run: |
