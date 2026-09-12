@@ -1,0 +1,80 @@
+name: Release SDK
+
+# Push a tag like  git tag v1.0.0 && git push origin v1.0.0
+# to trigger this workflow.
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'   # v1.0.0, v2.3.1, …
+
+jobs:
+  release:
+    name: Build & Publish Release
+    runs-on: ubuntu-latest
+
+    # `contents: write` lets the job create GitHub Releases and upload assets.
+    permissions:
+      contents: write
+
+    steps:
+      # ── 1. Source ─────────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Java ──────────────────────────────────────────────────────────────
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      # ── 3. Gradle cache ───────────────────────────────────────────────────────
+      - name: Cache Gradle packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle.kts', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      # ── 4. Parse version from the Git tag ─────────────────────────────────────
+      #    GITHUB_REF_NAME = "v1.2.3"  →  VERSION = "1.2.3"
+      - name: Extract version
+        id: ver
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      # ── 5. Build ──────────────────────────────────────────────────────────────
+      - name: Make gradlew executable
+        run: chmod +x gradlew
+
+      - name: Build release AAR
+        run: ./gradlew :turnstile-sdk:assembleRelease --no-daemon
+
+      # ── 6. Rename the AAR to include the version number ───────────────────────
+      #    turnstile-sdk-release.aar  →  turnstile-sdk-1.2.3.aar
+      - name: Rename AAR
+        run: |
+          mv turnstile-sdk/build/outputs/aar/turnstile-sdk-release.aar \
+             turnstile-sdk/build/outputs/aar/turnstile-sdk-${{ steps.ver.outputs.VERSION }}.aar
+
+      # ── 7. Create GitHub Release and attach the AAR ───────────────────────────
+      #    Uses the built-in `gh` CLI — no third-party action needed.
+      #    --generate-notes auto-fills the release body from merged PRs / commits.
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "TurnstileKit $GITHUB_REF_NAME" \
+            --generate-notes \
+            turnstile-sdk/build/outputs/aar/turnstile-sdk-${{ steps.ver.outputs.VERSION }}.aar
+
+      # ── 8. Also upload as a workflow artifact (handy for quick inspection) ────
+      - name: Upload AAR artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: turnstile-sdk-${{ steps.ver.outputs.VERSION }}
+          path: turnstile-sdk/build/outputs/aar/turnstile-sdk-${{ steps.ver.outputs.VERSION }}.aar
+          retention-days: 90
