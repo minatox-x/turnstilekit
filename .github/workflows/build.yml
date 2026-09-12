@@ -1,7 +1,5 @@
 name: Build SDK
 
-# Runs on every push to main/develop and on any pull request targeting main.
-# No local setup required — Gradle is installed by the workflow itself.
 on:
   push:
     branches: [ main, develop ]
@@ -14,33 +12,35 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # ── 1. Source ─────────────────────────────────────────────────────────
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ── 2. Java ───────────────────────────────────────────────────────────
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
 
-      # ── 3. Gradle ─────────────────────────────────────────────────────────
-      #    This installs Gradle 8.4 directly on the runner — no gradlew or
-      #    local Gradle installation needed. It also handles all Gradle caching
-      #    automatically (dependency JARs, build outputs).
+      # Install Gradle 8.4 on the runner so we can call `gradle wrapper`.
+      # The wrapper it generates is then used for the actual build — this
+      # ensures settings.gradle.kts (and its plugin repositories) are fully
+      # honoured, which plain `gradle` does not reliably do for Android projects.
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v3
         with:
           gradle-version: '8.4'
 
-      # ── 4. Build ──────────────────────────────────────────────────────────
-      - name: Build release AAR
-        run: gradle :turnstile-sdk:assembleRelease --no-daemon
+      # Generate gradlew in CI — no local Gradle installation needed.
+      # setup-gradle already cached the 8.4 distribution above, so ./gradlew
+      # picks it up from ~/.gradle/wrapper/dists without re-downloading.
+      - name: Generate Gradle wrapper
+        run: gradle wrapper --gradle-version 8.4 --distribution-type bin
 
-      # ── 5. Upload ─────────────────────────────────────────────────────────
-      #    Artifact is available on the workflow run page for 30 days.
-      #    Actions → Build SDK → (click the run) → Artifacts → turnstile-sdk-aar
+      - name: Build release AAR
+        run: |
+          chmod +x gradlew
+          ./gradlew :turnstile-sdk:assembleRelease --no-daemon
+
       - name: Upload AAR artifact
         uses: actions/upload-artifact@v4
         with:
