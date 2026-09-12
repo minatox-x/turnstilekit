@@ -8,8 +8,7 @@ name: Release SDK
 #   1. Build the AAR
 #   2. Create a GitHub Release with the AAR attached
 #   3. Publish the AAR to GitHub Packages (Maven)
-#
-# No local Gradle or gradlew required — everything runs in CI.
+
 on:
   push:
     tags:
@@ -37,12 +36,8 @@ jobs:
           distribution: 'temurin'
 
       # ── 3. Gradle ─────────────────────────────────────────────────────────
-      #    Installs Gradle 8.4 on the runner with automatic caching.
-      #    No gradlew or local Gradle installation needed.
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v3
-        with:
-          gradle-version: '8.4'
 
       # ── 4. Parse version from the Git tag ─────────────────────────────────
       #    GITHUB_REF_NAME = "v1.2.3"  →  VERSION = "1.2.3"
@@ -52,7 +47,9 @@ jobs:
 
       # ── 5. Build ──────────────────────────────────────────────────────────
       - name: Build release AAR
-        run: gradle :turnstile-sdk:assembleRelease --no-daemon
+        run: |
+          chmod +x gradlew
+          ./gradlew :turnstile-sdk:assembleRelease --no-daemon
 
       # ── 6. Rename AAR to include the version ──────────────────────────────
       #    turnstile-sdk-release.aar  →  turnstile-sdk-1.2.3.aar
@@ -62,9 +59,6 @@ jobs:
              turnstile-sdk/build/outputs/aar/turnstile-sdk-${{ steps.ver.outputs.VERSION }}.aar
 
       # ── 7. GitHub Release ─────────────────────────────────────────────────
-      #    Creates the Release on the repo's Releases page and attaches the
-      #    AAR so anyone can download it without a GitHub account.
-      #    --generate-notes fills the description from merged PRs/commits.
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -75,12 +69,8 @@ jobs:
             "turnstile-sdk/build/outputs/aar/turnstile-sdk-${{ steps.ver.outputs.VERSION }}.aar"
 
       # ── 8. Publish to GitHub Packages (Maven) ─────────────────────────────
-      #    After this step consumers can pull the SDK as a Gradle dependency
-      #    instead of downloading the AAR manually.
-      #    Requires the maven-publish block in turnstile-sdk/build.gradle.kts
-      #    (already present — just replace the two placeholder values).
       - name: Publish to GitHub Packages
-        run: gradle :turnstile-sdk:publish --no-daemon
+        run: ./gradlew :turnstile-sdk:publish --no-daemon
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SDK_VERSION:  ${{ steps.ver.outputs.VERSION }}
