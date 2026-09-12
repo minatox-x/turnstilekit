@@ -40,7 +40,7 @@ afterEvaluate {
             create<MavenPublication>("release") {
                 from(components["release"])
 
-                groupId    = "com.github.YOUR_GITHUB_USERNAME"     // ← replace
+                groupId    = "com.github.minatox-x"     // ← replace
                 artifactId = "turnstile-sdk"
                 version    = System.getenv("SDK_VERSION") ?: "1.0.0"
             }
@@ -50,7 +50,7 @@ afterEvaluate {
             maven {
                 name = "GitHubPackages"
                 url  = uri(
-                    "https://maven.pkg.github.com/YOUR_GITHUB_USERNAME/YOUR_REPO_NAME"  // ← replace
+                    "https://maven.pkg.github.com/minatox-x/turnstilekit"  // ← replace
                 )
                 credentials {
                     username = System.getenv("GITHUB_ACTOR")
